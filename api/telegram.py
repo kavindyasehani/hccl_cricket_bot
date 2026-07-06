@@ -34,6 +34,7 @@ MODE_NUMBERS = {
 }
 
 _supabase = None
+_tg_session = requests.Session()
 
 
 def now_iso() -> str:
@@ -53,7 +54,7 @@ def tg(method: str, payload: dict):
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("Missing TELEGRAM_BOT_TOKEN environment variable.")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
-    response = requests.post(url, json=payload, timeout=10)
+    response = _tg_session.post(url, json=payload, timeout=5)
     try:
         return response.json()
     except Exception:
@@ -745,16 +746,18 @@ def handle_pick_callback(callback: dict, game: dict, pick_text: str):
         answer_callback(cqid, f"{role}, you already picked for this ball.", True)
         return
 
+    # Fast UX: acknowledge the Telegram button tap immediately, then do Supabase + message edits.
+    # This stops the loading spinner quickly even if the database/update work takes longer.
+    answer_callback(cqid, f"{role} pick locked.")
+
     updated = update_game(game["id"], {field: pick})
     if updated.get("batter_choice") is not None and updated.get("bowler_choice") is not None:
         text, markup = process_ball(updated)
         fresh = get_game(game["id"])
         edit_message(fresh["chat_id"], fresh["message_id"], text, markup)
-        answer_callback(cqid, "Pick locked. Result revealed.")
         return
 
     edit_message(updated["chat_id"], updated["message_id"], play_text(updated), play_keyboard(updated["id"], updated["mode"]))
-    answer_callback(cqid, f"{role} pick locked.")
 
 
 def handle_callback(callback: dict):
@@ -804,7 +807,7 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self._json_response(200, {
             "ok": True,
-            "service": "HCCL Telegram Cricket Bot Webhook",
+            "service": "HCCL Telegram Cricket Bot Webhook v1.2 fast",
             "path": "/api/telegram",
             "message": "POST Telegram updates to this endpoint.",
         })
